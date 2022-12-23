@@ -154,8 +154,10 @@ public class PictureCapturingServiceImpl extends APictureCapturingService {
             new Handler().postDelayed(() -> {
                 try {
                     takePicture();
-                } catch (final CameraAccessException e) {
+                } catch (CameraAccessException e) {
                     Log.e(TAG, " exception occurred while taking picture from " + currentCameraId, e);
+                } catch (IllegalStateException e) {
+                    Log.e(TAG, "Failed to start camera preview.", e);
                 }
             }, 500);
         }
@@ -237,7 +239,7 @@ public class PictureCapturingServiceImpl extends APictureCapturingService {
 
 
     private void saveImageToDisk(final byte[] bytes) {
-        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyymmddhhmmss");
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd_HH:mm:ss");
         String date = dateFormat.format(new Date());
 
         final File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM) + "/" + date +".jpg");

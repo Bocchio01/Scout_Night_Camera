@@ -4,14 +4,12 @@ package com.example.android_scout_camera;
 import android.Manifest;
 import android.annotation.TargetApi;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
 
+import android.os.Environment;
 import android.widget.Button;
-import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -19,7 +17,21 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.TreeMap;
 
@@ -35,9 +47,16 @@ public class MainActivity extends AppCompatActivity implements PictureCapturingL
 
     public static final int MY_PERMISSIONS_REQUEST_ACCESS_CODE = 1;
 
-    // private ImageView uploadBackPhoto;
-    private TextView LogMsg;
+    private Button TakePhotoButton;
+    private Button SaveLogButton;
+    private TextView PhotoCountedNumber;
+    private TextView NetworkLogText;
+
+
     private APictureCapturingService pictureService;
+
+    private ServerSocket httpServerSocket;
+
 
 
     @Override
@@ -45,15 +64,47 @@ public class MainActivity extends AppCompatActivity implements PictureCapturingL
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         checkPermissions();
-        LogMsg = (TextView) findViewById(R.id.LogMsg);
-        // uploadBackPhoto = (ImageView) findViewById(R.id.backIV);
-        final Button btn = (Button) findViewById(R.id.ButtonBlock);
+
+        TakePhotoButton = findViewById(R.id.TakePhotoButton);
+        SaveLogButton = findViewById(R.id.SaveLogButton);
+
+        PhotoCountedNumber = findViewById(R.id.PhotoCountedNumber);
+        NetworkLogText = findViewById(R.id.NetworkLogText);
+
+        PhotoCountedNumber.setText(String.valueOf(0));
+        NetworkLogText.setText(getIpAddress() + ":" + HttpServerThread.HttpServerPORT + "\n");
+
+        HttpServerThread httpServerThread = new HttpServerThread();
+        httpServerThread.start();
+
         pictureService = PictureCapturingServiceImpl.getInstance(this);
-        btn.setOnClickListener(v -> {
-                    showToast("Starting capture!");
-                    pictureService.startCapturing(this);
-                }
-        );
+        TakePhotoButton.setOnClickListener(v -> StartCapturing());
+        SaveLogButton.setOnClickListener(v -> SaveLog());
+    }
+
+    private void StartCapturing(){
+        runOnUiThread(() -> {
+            showToast("Starting capture!");
+            pictureService.startCapturing(this);
+        });
+    }
+
+    private void SaveLog() {
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd_HH:mm:ss");
+        String date = dateFormat.format(new Date());
+
+        String fileName = date + "_Log.txt";
+        String fileContent = "Photo counted: " + PhotoCountedNumber.getText() + "\n" + NetworkLogText.getText();
+
+        try {
+            File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM) + "/" + fileName);
+            FileOutputStream fos = new FileOutputStream(file);
+            fos.write(fileContent.getBytes());
+            fos.close();
+            showToast("Log saved!");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -93,9 +144,14 @@ public class MainActivity extends AppCompatActivity implements PictureCapturingL
     public void onCaptureDone(String pictureUrl, byte[] pictureData) {
         if (pictureData != null && pictureUrl != null) {
             runOnUiThread(() -> {
-                LogMsg.setText(LogMsg.getText() + String.valueOf(LogMsg.getLineCount()) + ":" + pictureUrl  + "\n");
+                try {
+                    int PhotoPrevNumber = Integer.parseInt(PhotoCountedNumber.getText().toString());
+                    PhotoCountedNumber.setText(String.valueOf(PhotoPrevNumber + 1));
+                } catch (NumberFormatException e) {
+                    showToast("Error saving picture!");
+                }
             });
-            showToast("Picture saved to " + pictureUrl);
+            // showToast("Picture saved to " + pictureUrl);
         }
     }
 
@@ -131,6 +187,141 @@ public class MainActivity extends AppCompatActivity implements PictureCapturingL
         if (!neededPermissions.isEmpty()) {
             requestPermissions(neededPermissions.toArray(new String[]{}),
                     MY_PERMISSIONS_REQUEST_ACCESS_CODE);
+        }
+    }
+
+
+
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+
+        if (httpServerSocket != null) {
+            try {
+                httpServerSocket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private String getIpAddress() {
+        String ip = "";
+        try {
+            Enumeration<NetworkInterface> enumNetworkInterfaces = NetworkInterface.getNetworkInterfaces();
+            while (enumNetworkInterfaces.hasMoreElements()) {
+                NetworkInterface networkInterface = enumNetworkInterfaces.nextElement();
+                Enumeration<InetAddress> enumInetAddress = networkInterface.getInetAddresses();
+                while (enumInetAddress.hasMoreElements()) {
+                    InetAddress inetAddress = enumInetAddress.nextElement();
+
+                    if (inetAddress.isSiteLocalAddress()) {
+                        ip += "SiteLocalAddress: " + inetAddress.getHostAddress() + "\n";
+                    }
+
+                }
+
+            }
+
+        } catch (SocketException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            ip += "Something Wrong! " + e.toString() + "\n";
+        }
+
+        return ip;
+    }
+
+    private class HttpServerThread extends Thread {
+
+        static final int HttpServerPORT = 8888;
+
+        @Override
+        public void run() {
+            Socket socket = null;
+
+            try {
+                httpServerSocket = new ServerSocket(HttpServerPORT);
+
+                while(true) {
+                    socket = httpServerSocket.accept();
+
+                    HttpResponseThread httpResponseThread =
+                            new HttpResponseThread(
+                                    socket,
+                                    "welcomeMsg.getText().toString()");
+                    httpResponseThread.start();
+                }
+
+            } catch (IOException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+
+        }
+
+
+    }
+
+    private class HttpResponseThread extends Thread {
+
+        Socket socket;
+        String h1;
+
+        HttpResponseThread(Socket socket, String msg){
+            this.socket = socket;
+            h1 = msg;
+        }
+
+        @Override
+        public void run() {
+            BufferedReader is;
+            PrintWriter os;
+            String request;
+
+
+            try {
+                is = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                request = is.readLine();
+
+                os = new PrintWriter(socket.getOutputStream(), true);
+
+                // String response =
+                //         "<html><head></head>" +
+                //                 "<body>" +
+                //                 "<h1>" + h1 + "</h1>" +
+                //                 "</body></html>";
+                String response = "{\"status\":1}";
+
+                os.print("HTTP/1.0 200" + "\r\n");
+                os.print("Content type: application/json" + "\r\n");
+                os.print("Content length: " + response.length() + "\r\n");
+                os.print("\r\n");
+                os.print(response + "\r\n");
+                os.flush();
+                // socket.close();
+
+                //
+
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd_HH:mm:ss");
+                String date = dateFormat.format(new Date());
+
+                String msgLog = date + " | " + request + " - " + socket.getInetAddress().toString() + "\n";
+                socket.close();
+
+                MainActivity.this.runOnUiThread(() -> NetworkLogText.setText(NetworkLogText.getText() + msgLog));
+
+                if (!request.contains("favicon")) {
+                    MainActivity.this.runOnUiThread(MainActivity.this::StartCapturing);
+                }
+
+            } catch (IOException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+
+
         }
     }
 }
